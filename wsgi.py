@@ -1,0 +1,9 @@
+tkinter
+requests
+feedparser
+threading
+json
+datetime
+matplotlib.pyplot
+FigureCanvasTkAgg
+Basemap
