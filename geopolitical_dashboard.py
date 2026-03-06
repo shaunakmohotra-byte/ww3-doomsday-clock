@@ -4,9 +4,12 @@ import feedparser
 import threading
 import json
 import datetime
+import matplotlib
+
+matplotlib.use("TkAgg")
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from mpl_toolkits.basemap import Basemap
 
 OLLAMA_MODEL = "llama3.2:1b"
 UPDATE_INTERVAL = 300000
@@ -34,17 +37,27 @@ ALERT_KEYWORDS = [
     "troops"
 ]
 
-
 # ---------------- HEATMAP ----------------
+
+from mpl_toolkits.basemap import Basemap
 
 def draw_world_heatmap(ax):
 
     ax.clear()
 
-    m = Basemap(projection='robin', lon_0=0, resolution='c', ax=ax)
+    m = Basemap(
+        projection='cyl',
+        llcrnrlat=-60,
+        urcrnrlat=80,
+        llcrnrlon=-180,
+        urcrnrlon=180,
+        resolution='c',
+        ax=ax
+    )
 
-    m.drawcoastlines(color=GREEN)
-    m.drawcountries(color=GREEN)
+    # world styling
+    m.drawcoastlines(color=GREEN, linewidth=0.5)
+    m.drawcountries(color=GREEN, linewidth=0.4)
     m.fillcontinents(color="#001100", lake_color=BLACK)
     m.drawmapboundary(fill_color=BLACK)
 
@@ -62,13 +75,26 @@ def draw_world_heatmap(ax):
 
         x, y = m(lon, lat)
 
-        size = 100 + intensity * 50
+        # subtle radius scaling
+        size = 80 + intensity * 15
 
-        ax.scatter(x, y, s=size, c="red", alpha=0.6)
+        ax.scatter(
+            x,
+            y,
+            s=size,
+            color=GREEN,      # always green
+            alpha=0.7
+        )
+
+        ax.text(
+            x + 2,
+            y + 2,
+            region,
+            color=GREEN,
+            fontsize=8
+        )
 
     ax.set_title("LIVE GLOBAL HOTSPOT MAP", color=GREEN)
-
-
 # ---------------- SYSTEM FUNCTIONS ----------------
 
 def get_defcon(risk):
@@ -110,9 +136,26 @@ def fetch_news():
 def update_hotspots(headlines):
 
     for region in HOTSPOTS:
-        for h in headlines:
-            if region.lower() in h.lower():
-                HOTSPOTS[region] += 1
+        HOTSPOTS[region] = 0
+
+    for h in headlines:
+
+        text = h.lower()
+
+        if "ukraine" in text or "russia" in text:
+            HOTSPOTS["Ukraine"] += 1
+
+        if "taiwan" in text or "china" in text:
+            HOTSPOTS["Taiwan"] += 1
+
+        if "israel" in text or "gaza" in text or "iran" in text:
+            HOTSPOTS["Middle East"] += 1
+
+        if "south china sea" in text:
+            HOTSPOTS["South China Sea"] += 1
+
+        if "north korea" in text or "south korea" in text:
+            HOTSPOTS["Korean Peninsula"] += 1
 
 
 def detect_alerts(headlines):
@@ -160,10 +203,7 @@ Return JSON ONLY like this:
 
         data = r.json()
 
-        if "response" not in data:
-            return '{"risk_score":0,"analysis":"AI returned empty response"}'
-
-        return data["response"]
+        return data.get("response", '{"risk_score":0,"analysis":"AI error"}')
 
     except:
         return '{"risk_score":0,"analysis":"AI connection failed"}'
@@ -185,8 +225,6 @@ class Dashboard:
         self.update_clock()
         self.start_analysis()
 
-    # UI
-
     def build_ui(self):
 
         title = tk.Label(
@@ -204,11 +242,11 @@ class Dashboard:
         main = tk.Frame(self.root, bg=BLACK)
         main.pack(fill="both", expand=True)
 
-        main.columnconfigure(0, weight=1)
-        main.columnconfigure(1, weight=1)
-
         left = tk.Frame(main, bg=BLACK)
-        left.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        left.pack(side="left", fill="both", expand=True, padx=20, pady=20)
+
+        right = tk.Frame(main, bg=BLACK)
+        right.pack(side="right", fill="both", expand=True, padx=20, pady=20)
 
         self.risk_label = tk.Label(left, text="WAR RISK: 0%", font=("Agency FB", 32, "bold"), fg=GREEN, bg=BLACK)
         self.risk_label.pack(anchor="w")
@@ -226,9 +264,6 @@ class Dashboard:
         self.alert_box = tk.Text(left, height=6, bg=BLACK, fg="red")
         self.alert_box.pack(fill="x")
 
-        right = tk.Frame(main, bg=BLACK)
-        right.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
-
         tk.Label(right, text="AI STRATEGIC ANALYSIS", fg=GREEN, bg=BLACK).pack(anchor="w")
 
         self.analysis_box = tk.Text(right, height=15, bg=BLACK, fg=GREEN)
@@ -239,18 +274,15 @@ class Dashboard:
         self.hotspot_box = tk.Text(right, height=6, bg=BLACK, fg=GREEN)
         self.hotspot_box.pack(fill="x")
 
-        fig = plt.Figure(figsize=(6,4), dpi=100)
+        fig = plt.Figure(figsize=(8,5), dpi=100)
         self.ax = fig.add_subplot(111)
 
         draw_world_heatmap(self.ax)
 
         fig.patch.set_facecolor(BLACK)
-        self.ax.set_facecolor(BLACK)
 
         self.canvas = FigureCanvasTkAgg(fig, master=right)
         self.canvas.get_tk_widget().pack(fill="both", expand=True, pady=20)
-
-    # CLOCK
 
     def update_clock(self):
 
@@ -259,22 +291,15 @@ class Dashboard:
 
         self.root.after(1000, self.update_clock)
 
-    # START THREAD
-
     def start_analysis(self):
 
         threading.Thread(target=self.run_analysis, daemon=True).start()
-
-    # ANALYSIS
 
     def run_analysis(self):
 
         headlines = fetch_news()
 
-        if not headlines:
-            news_text = "No news available"
-        else:
-            news_text = "\n• " + "\n• ".join(headlines)
+        news_text = "\n• " + "\n• ".join(headlines) if headlines else "No news"
 
         update_hotspots(headlines)
 
@@ -293,17 +318,13 @@ class Dashboard:
             analysis = parsed.get("analysis", "No analysis")
 
         except:
+
             self.risk_score = 0
             analysis = "AI parsing failed"
 
-        self.root.after(
-            0,
-            lambda: self.update_ui(news_text, analysis, alerts)
-        )
+        self.root.after(0, lambda: self.update_ui(news_text, analysis, alerts))
 
         self.root.after(UPDATE_INTERVAL, self.start_analysis)
-
-    # UPDATE UI
 
     def update_ui(self, news, analysis, alerts):
 
@@ -331,58 +352,52 @@ class Dashboard:
         draw_world_heatmap(self.ax)
         self.canvas.draw()
 
-
 # ---------------- RUN ----------------
+
 root = tk.Tk()
 root.title("GLOBAL WAR INTELLIGENCE SYSTEM")
 root.geometry("1400x900")
 root.configure(bg=BLACK)
 
-# container
-container = tk.Frame(root, bg=BLACK)
+# SCROLLABLE SYSTEM
+
+container = tk.Frame(root)
 container.pack(fill="both", expand=True)
 
-# canvas
 canvas = tk.Canvas(container, bg=BLACK, highlightthickness=0)
 canvas.pack(side="left", fill="both", expand=True)
 
-# vertical scrollbar
-v_scrollbar = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
-v_scrollbar.pack(side="right", fill="y")
+scrollbar_y = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
+scrollbar_y.pack(side="right", fill="y")
 
-# horizontal scrollbar (NEW)
-h_scrollbar = tk.Scrollbar(root, orient="horizontal", command=canvas.xview)
-h_scrollbar.pack(side="bottom", fill="x")
+scrollbar_x = tk.Scrollbar(root, orient="horizontal", command=canvas.xview)
+scrollbar_x.pack(side="bottom", fill="x")
 
-canvas.configure(
-    yscrollcommand=v_scrollbar.set,
-    xscrollcommand=h_scrollbar.set
-)
+canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
 
-# scrollable frame
 scrollable_frame = tk.Frame(canvas, bg=BLACK)
 
-canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
 
-# update scroll region
+def resize_canvas(event):
+    canvas.itemconfig(canvas_window, width=event.width)
+
+canvas.bind("<Configure>", resize_canvas)
+
 def configure_scroll(event):
     canvas.configure(scrollregion=canvas.bbox("all"))
 
 scrollable_frame.bind("<Configure>", configure_scroll)
 
-# mouse wheel scrolling (vertical)
 def _on_mousewheel(event):
     canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
-canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-# SHIFT + mouse wheel for horizontal scrolling (NEW)
-def _on_shift_mousewheel(event):
+def _on_shiftwheel(event):
     canvas.xview_scroll(int(-1*(event.delta/120)), "units")
 
-canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
+canvas.bind_all("<MouseWheel>", _on_mousewheel)
+canvas.bind_all("<Shift-MouseWheel>", _on_shiftwheel)
 
-# start dashboard inside scroll frame
 app = Dashboard(scrollable_frame)
 
 root.mainloop()
